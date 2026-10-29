@@ -47,6 +47,64 @@ describe('job configuration persistence', () => {
     }
   });
 
+  it('persists automatic-mirroring enablement only for valid sandbox folders', async () => {
+    await withRepository(async (repository, testDirectory) => {
+      const source = join(testDirectory, 'source');
+      const destination = join(testDirectory, 'backup');
+      mkdirSync(source);
+      mkdirSync(destination);
+      const service = new JobService(repository);
+      const created = await service.create({
+        name: 'automatic',
+        sourcePath: source,
+        destinationPath: destination,
+      });
+
+      const enabled = await service.setEnabled(created.id, true);
+      assert.equal(enabled.enabled, true);
+      assert.equal(repository.list()[0].enabled, true);
+
+      const disabled = await service.setEnabled(created.id, false);
+      assert.equal(disabled.enabled, false);
+      assert.equal(repository.list()[0].enabled, false);
+    });
+  });
+
+  it('records trigger-aware run history, redacts local paths, and retains only 1000 runs', async () => {
+    await withRepository(async (repository, testDirectory) => {
+      const source = join(testDirectory, 'source');
+      mkdirSync(source);
+      const job = await new JobService(repository).create({
+        name: 'History test',
+        sourcePath: source,
+        destinationPath: join(testDirectory, 'destination'),
+      });
+
+      for (let index = 0; index < 1005; index += 1) {
+        const startedAt = new Date(Date.UTC(2020, 0, 1, 0, 0, index)).toISOString();
+        repository.recordRun({
+          runId: `history-${index}`,
+          jobId: job.id,
+          trigger: 'watcher',
+          outcome: 'success',
+          startedAt,
+          finishedAt: new Date(Date.parse(startedAt) + 10).toISOString(),
+          exitCode: 1,
+          durationMs: 10,
+          summary: `Mirrored ${source}`,
+          outputTruncated: false,
+        });
+      }
+
+      const history = repository.listRunHistory(1000);
+      assert.equal(history.length, 1000);
+      assert.equal(history[0].runId, 'history-1004');
+      assert.equal(repository.listRunHistory(1)[0].trigger, 'watcher');
+      assert.match(repository.listRunHistory(1)[0].summary, /\[REDACTED_PATH\]/);
+      assert.equal(repository.listRunHistory(5000).length, 1000);
+    });
+  });
+
   it('rejects case-insensitive duplicate job names', async () => {
     await withRepository(async (repository, testDirectory) => {
       const source = join(testDirectory, 'source');

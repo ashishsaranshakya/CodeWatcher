@@ -1,8 +1,19 @@
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import type { ExclusionRule, ExclusionType, MirrorJob, SyncRunResult } from '../shared/jobs.ts';
+import { dirname, join } from 'node:path';
+import type {
+  ExclusionRule,
+  ExclusionType,
+  MirrorJob,
+  RunHistoryEntry,
+  SyncOutcome,
+  SyncRunResult,
+  SyncTrigger,
+} from '../shared/jobs.ts';
 import { pathsOverlap } from './path-safety.ts';
+import { redactDiagnosticText } from './diagnostics.ts';
+
+const RUN_HISTORY_RETENTION_LIMIT = 1000;
 
 function readText(row: Record<string, SQLOutputValue>, key: string): string {
   const value = row[key];
@@ -53,8 +64,12 @@ function rowToExclusion(row: Record<string, SQLOutputValue>): ExclusionRule {
 
 export class JobRepository {
   private readonly db: DatabaseSync;
+  private readonly runLockDirectory: string;
+  private readonly diagnosticsDirectory: string;
 
   constructor(databasePath: string, migrationsDirectory: string) {
+    this.runLockDirectory = join(dirname(databasePath), 'run-locks');
+    this.diagnosticsDirectory = join(dirname(databasePath), 'logs');
     this.db = new DatabaseSync(databasePath);
     try {
       this.db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;');
@@ -63,6 +78,14 @@ export class JobRepository {
       this.db.close();
       throw error;
     }
+  }
+
+  getRunLockDirectory(): string {
+    return this.runLockDirectory;
+  }
+
+  getDiagnosticsDirectory(): string {
+    return this.diagnosticsDirectory;
   }
 
   private migrate(migrationsDirectory: string): void {
@@ -161,6 +184,7 @@ export class JobRepository {
       SyncRunResult,
       | 'runId'
       | 'jobId'
+      | 'trigger'
       | 'outcome'
       | 'startedAt'
       | 'finishedAt'
@@ -175,11 +199,12 @@ export class JobRepository {
         INSERT INTO job_runs (
           run_id, job_id, trigger_type, status, started_at_utc, finished_at_utc,
           exit_code, summary, duration_ms, output_truncated
-        ) VALUES (?, ?, 'manual-copy', ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         run.runId,
         run.jobId,
+        run.trigger,
         run.outcome,
         run.startedAt,
         run.finishedAt,
@@ -188,6 +213,75 @@ export class JobRepository {
         run.durationMs,
         run.outputTruncated ? 1 : 0,
       );
+    this.db
+      .prepare(`
+        DELETE FROM job_runs
+        WHERE run_id NOT IN (
+          SELECT run_id FROM job_runs
+          ORDER BY started_at_utc DESC, run_id DESC
+          LIMIT ?
+        )
+      `)
+      .run(RUN_HISTORY_RETENTION_LIMIT);
+  }
+
+  listRunHistory(limit = 100): RunHistoryEntry[] {
+    const boundedLimit = Math.min(RUN_HISTORY_RETENTION_LIMIT, Math.max(1, Math.floor(limit)));
+    return this.db
+      .prepare(`
+        SELECT r.run_id, r.job_id, j.name AS job_name, r.trigger_type, r.status,
+               r.started_at_utc, r.finished_at_utc, r.exit_code, r.duration_ms,
+               r.summary, r.output_truncated
+        FROM job_runs r
+        JOIN jobs j ON j.job_id = r.job_id
+        ORDER BY r.started_at_utc DESC, r.run_id DESC
+        LIMIT ?
+      `)
+      .all(boundedLimit)
+      .map((row) => {
+        const triggerValue = readText(row, 'trigger_type');
+        const outcomeValue = readText(row, 'status');
+        const finishedAt = row.finished_at_utc;
+        const exitCode = row.exit_code;
+        const durationMs = row.duration_ms;
+        const outputTruncated = row.output_truncated;
+        let trigger: SyncTrigger;
+        if (triggerValue === 'manual-copy') {
+          trigger = 'manual';
+        } else if (['manual', 'startup', 'watcher', 'daily', 'one-shot'].includes(triggerValue)) {
+          trigger = triggerValue as SyncTrigger;
+        } else {
+          throw new Error(`Unknown mirror run trigger "${triggerValue}" in the database.`);
+        }
+        if (!['success', 'warning', 'failure', 'cancelled', 'timed_out'].includes(outcomeValue)) {
+          throw new Error(`Unknown mirror run outcome "${outcomeValue}" in the database.`);
+        }
+        if (finishedAt !== null && typeof finishedAt !== 'string') {
+          throw new Error('Database value "finished_at_utc" is not text or null.');
+        }
+        if (exitCode !== null && typeof exitCode !== 'number') {
+          throw new Error('Database value "exit_code" is not numeric or null.');
+        }
+        if (durationMs !== null && typeof durationMs !== 'number') {
+          throw new Error('Database value "duration_ms" is not numeric or null.');
+        }
+        if (outputTruncated !== 0 && outputTruncated !== 1) {
+          throw new Error('Database value "output_truncated" is not a valid boolean.');
+        }
+        return {
+          runId: readText(row, 'run_id'),
+          jobId: readText(row, 'job_id'),
+          jobName: readText(row, 'job_name'),
+          trigger,
+          outcome: outcomeValue as SyncOutcome,
+          startedAt: readText(row, 'started_at_utc'),
+          finishedAt,
+          exitCode,
+          durationMs,
+          summary: redactDiagnosticText(readText(row, 'summary')),
+          outputTruncated: outputTruncated === 1,
+        };
+      });
   }
 
   create(job: MirrorJob): MirrorJob {
@@ -239,6 +333,13 @@ export class JobRepository {
 
   delete(jobId: string): boolean {
     const result = this.db.prepare('DELETE FROM jobs WHERE job_id = ?').run(jobId);
+    return result.changes === 1;
+  }
+
+  setEnabled(jobId: string, enabled: boolean): boolean {
+    const result = this.db
+      .prepare('UPDATE jobs SET enabled = ?, updated_at_utc = ? WHERE job_id = ?')
+      .run(enabled ? 1 : 0, new Date().toISOString(), jobId);
     return result.changes === 1;
   }
 

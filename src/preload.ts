@@ -6,7 +6,10 @@ const api: CodeMirrorApi = {
   validatePaths: (source, destination) =>
     ipcRenderer.invoke('paths:validate', source, destination),
   listJobs: () => ipcRenderer.invoke('jobs:list'),
+  listRunHistory: () => ipcRenderer.invoke('diagnostics:list-runs'),
+  exportDiagnostics: () => ipcRenderer.invoke('diagnostics:export'),
   createJob: (input) => ipcRenderer.invoke('jobs:create', input),
+  setJobEnabled: (jobId, enabled) => ipcRenderer.invoke('jobs:set-enabled', jobId, enabled),
   deleteJob: (jobId) => ipcRenderer.invoke('jobs:delete', jobId),
   updateExclusions: (jobId, rules) => ipcRenderer.invoke('jobs:update-exclusions', jobId, rules),
   previewJob: (jobId) => ipcRenderer.invoke('jobs:preview', jobId),

@@ -42,15 +42,31 @@ export interface SyncPreview {
 }
 
 export type SyncOutcome = 'success' | 'warning' | 'failure' | 'cancelled' | 'timed_out';
+export type SyncTrigger = 'manual' | 'startup' | 'watcher' | 'daily' | 'one-shot';
 
 export interface SyncRunResult {
   runId: string;
   jobId: string;
+  trigger: SyncTrigger;
   outcome: SyncOutcome;
   exitCode: number | null;
   startedAt: string;
   finishedAt: string;
   durationMs: number;
+  summary: string;
+  outputTruncated: boolean;
+}
+
+export interface RunHistoryEntry {
+  runId: string;
+  jobId: string;
+  jobName: string;
+  trigger: SyncTrigger;
+  outcome: SyncOutcome;
+  startedAt: string;
+  finishedAt: string | null;
+  exitCode: number | null;
+  durationMs: number | null;
   summary: string;
   outputTruncated: boolean;
 }

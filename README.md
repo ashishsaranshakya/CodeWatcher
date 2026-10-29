@@ -15,9 +15,7 @@ npm run typecheck
 npm start
 ```
 
-`npm start` is a foreground desktop process. Close the CodeMirror window to
-exit it. The current app can create and remove disabled mirror-job
-configurations. It stores settings in
+`npm start` starts the foreground desktop app. Settings are stored in
 `%APPDATA%\CodeMirror\codemirror.sqlite`; test databases are created in a
 unique temporary directory and removed when each test exits.
 
@@ -34,16 +32,42 @@ without showing the preview or asking for confirmation. The preview reports
 potential deletions and warns when they exceed 100 files or 10% of the
 destination, but this threshold is informational only and never blocks a
 mirror. The final product will not require deletion approval or enforce a
-deletion threshold. The source and
-existing destination must be inside the sandbox. New jobs remain disabled for
-automation, but can be run manually. Watchers, background workers, and
-Windows scheduled tasks are not implemented yet, and no tasks are registered.
+deletion threshold. The source and existing destination must be inside the
+sandbox.
+
+Jobs are created with automation disabled. Enabling automatic mirroring
+registers a CodeMirror-owned Windows Task Scheduler logon task and launches a
+headless worker. The worker mirrors enabled jobs at startup, watches source
+folders recursively, coalesces changes after 10 seconds of quiet (with a
+60-second maximum wait), retries failures after 5, 15, and 60 seconds, and
+performs a full reconciliation daily. If a watcher is unavailable, daily
+reconciliation remains the backstop. The worker uses cross-process locks to
+prevent duplicate job runs and exits after 30 seconds with no enabled jobs.
+Disabling the last automatic job removes the owned scheduled task. Automatic
+and manual mirrors both use `/MIR`; enabling automation does not add a
+deletion prompt or deletion-threshold block.
+
+## Run history and diagnostics
+
+The app shows recent local mirror runs, including their trigger, result,
+duration, and summary. History is retained to the newest 1,000 runs. Structured
+application logs are stored under `%APPDATA%\CodeMirror\logs` and rotate at
+2 MB per file with three backups. Diagnostic exports include up to 100 recent
+runs and 500 log records; they omit configured paths, job names, and run/job
+identifiers, and redact Windows paths from summaries and log messages. Export
+is user-initiated to a location selected in the Save dialog; CodeMirror does
+not upload diagnostics. These records describe local mirroring only and do
+not indicate Google Drive upload completion.
 
 ## Test process safety
 
-Tests must remain foregrounded, must not create persistent Task Scheduler
-entries, and must clean up temporary databases and any child processes they
-start before reporting completion. Scheduler integration tests must use a
-uniquely named disposable task and remove it in a `finally` cleanup path.
-Until that harness exists, tests must not invoke Task Scheduler or launch
-long-lived supervisor/worker processes.
+Tests must remain foregrounded and clean up temporary databases and any child
+processes they start before reporting completion. Worker lifecycle tests are
+bounded and await worker shutdown. The normal test suite never creates a
+scheduled task. To opt in to the Windows Scheduler integration test, which
+creates a unique disposable task and verifies it is removed in `finally`, run:
+
+```powershell
+$env:RUN_CODEMIRROR_SCHEDULER_INTEGRATION = '1'
+npm test
+```

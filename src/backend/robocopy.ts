@@ -2,10 +2,18 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { lstat, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import type { ExclusionRule, MirrorJob, SyncOutcome, SyncRunResult } from '../shared/jobs.ts';
+import type {
+  ExclusionRule,
+  MirrorJob,
+  SyncOutcome,
+  SyncRunResult,
+  SyncTrigger,
+} from '../shared/jobs.ts';
 import { DEFAULT_EXCLUSIONS, isExcluded } from './exclusions.ts';
 import { assertSandboxFolders, validateMirrorPaths } from './path-safety.ts';
+import { acquireProcessLock } from './process-lock.ts';
 import type { JobRepository } from './repository.ts';
+import { DiagnosticLogger } from './diagnostics.ts';
 
 const OUTPUT_CAPTURE_LIMIT = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
@@ -216,6 +224,7 @@ function readJob(repository: JobRepository, jobId: string): MirrorJob {
 export class RobocopyService {
   private readonly repository: JobRepository;
   private readonly timeoutMs: number;
+  private readonly logger: DiagnosticLogger;
   private readonly active = new Map<string, ChildProcessWithoutNullStreams>();
   private readonly activeJobs = new Set<string>();
   private readonly cancelledJobs = new Set<string>();
@@ -224,15 +233,16 @@ export class RobocopyService {
 
   constructor(repository: JobRepository, timeoutMs = DEFAULT_TIMEOUT_MS) {
     this.repository = repository;
+    this.logger = new DiagnosticLogger(repository.getDiagnosticsDirectory());
     this.timeoutMs = Number.isFinite(timeoutMs)
       ? Math.min(Math.max(1000, timeoutMs), DEFAULT_TIMEOUT_MS)
       : DEFAULT_TIMEOUT_MS;
   }
 
-  runNow(jobId: string): Promise<SyncRunResult> {
+  runNow(jobId: string, trigger: SyncTrigger = 'manual'): Promise<SyncRunResult> {
     if (this.activeJobs.has(jobId)) throw new Error('This job is already synchronizing.');
     this.activeJobs.add(jobId);
-    const run = this.executeRun(jobId).finally(() => {
+    const run = this.executeRun(jobId, trigger).finally(() => {
       this.activeJobs.delete(jobId);
       this.activeRuns.delete(jobId);
       this.cancelledJobs.delete(jobId);
@@ -241,7 +251,7 @@ export class RobocopyService {
     return run;
   }
 
-  private async executeRun(jobId: string): Promise<SyncRunResult> {
+  private async executeRun(jobId: string, trigger: SyncTrigger): Promise<SyncRunResult> {
     const runId = randomUUID();
     const startedAt = new Date().toISOString();
     const startTime = Date.now();
@@ -249,8 +259,14 @@ export class RobocopyService {
     let exitCode: number | null = null;
     let summary = 'Copy did not complete.';
     let outputTruncated = false;
+    let processLock: ReturnType<typeof acquireProcessLock> | undefined;
 
+    this.logger.info('mirror_started', { runId, jobId, trigger });
     try {
+      processLock = acquireProcessLock(
+        this.repository.getRunLockDirectory(),
+        `job:${jobId}`,
+      );
       const job = readJob(this.repository, jobId);
       const pathValidation = validateMirrorPaths(job.sourcePath, job.destinationPath);
       if (!pathValidation.valid) throw new Error(pathValidation.reason);
@@ -299,6 +315,7 @@ export class RobocopyService {
       }
     } finally {
       this.active.delete(jobId);
+      processLock?.release();
     }
 
     const finishedAt = new Date().toISOString();
@@ -306,6 +323,7 @@ export class RobocopyService {
     this.repository.recordRun({
       runId,
       jobId,
+      trigger,
       outcome,
       startedAt,
       finishedAt,
@@ -315,9 +333,19 @@ export class RobocopyService {
       outputTruncated,
     });
 
+    this.logger.info('mirror_finished', {
+      runId,
+      jobId,
+      trigger,
+      outcome,
+      exitCode,
+      durationMs,
+      outputTruncated,
+    });
     return {
       runId,
       jobId,
+      trigger,
       outcome,
       exitCode,
       startedAt,

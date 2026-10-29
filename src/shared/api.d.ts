@@ -1,4 +1,11 @@
-import type { CreateJobInput, ExclusionRule, MirrorJob, SyncPreview, SyncRunResult } from './jobs';
+import type {
+  CreateJobInput,
+  ExclusionRule,
+  MirrorJob,
+  RunHistoryEntry,
+  SyncPreview,
+  SyncRunResult,
+} from './jobs';
 
 export interface PathValidationResult {
   valid: boolean;
@@ -9,7 +16,10 @@ export interface CodeMirrorApi {
   getVersion(): Promise<string>;
   validatePaths(source: string, destination: string): Promise<PathValidationResult>;
   listJobs(): Promise<MirrorJob[]>;
+  listRunHistory(): Promise<RunHistoryEntry[]>;
+  exportDiagnostics(): Promise<boolean>;
   createJob(input: CreateJobInput): Promise<MirrorJob>;
+  setJobEnabled(jobId: string, enabled: boolean): Promise<MirrorJob>;
   deleteJob(jobId: string): Promise<void>;
   updateExclusions(jobId: string, rules: ExclusionRule[]): Promise<ExclusionRule[]>;
   previewJob(jobId: string): Promise<SyncPreview>;

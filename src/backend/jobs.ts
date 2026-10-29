@@ -17,6 +17,18 @@ export class JobService {
     return this.repository.list();
   }
 
+  async setEnabled(jobId: string, enabled: boolean): Promise<MirrorJob> {
+    const job = this.repository.list().find((candidate) => candidate.id === jobId);
+    if (!job) throw new Error('The mirror job no longer exists.');
+    if (enabled) {
+      await assertSandboxFolders(job.sourcePath, job.destinationPath);
+    }
+    if (!this.repository.setEnabled(jobId, enabled)) {
+      throw new Error('The mirror job could not be updated.');
+    }
+    return { ...job, enabled, updatedAt: new Date().toISOString() };
+  }
+
   updateExclusions(jobId: string, rules: ExclusionRule[]): ExclusionRule[] {
     const job = this.repository.list().find((candidate) => candidate.id === jobId);
     if (!job) throw new Error('The mirror job no longer exists.');
