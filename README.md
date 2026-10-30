@@ -22,6 +22,8 @@ logs, Electron user data, run locks, worker process identity, and Task Scheduler
 task. Each app launch uses its profile directly; it does not migrate or copy
 data from the old root-level `%APPDATA%\CodeMirror` location. Test databases
 are created in a unique temporary directory and removed when each test exits.
+Uninstalling the packaged app removes its username-specific profile and owned
+scheduled task; the separate development profile is preserved.
 
 For development safety, source and destination folders are hard-restricted to
 `C:\Users\harsh\Desktop\CodeWatcher\sandbox`. The restriction is enforced in

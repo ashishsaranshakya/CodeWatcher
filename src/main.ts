@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { userInfo } from 'node:os';
-import { writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { JobService } from './backend/jobs';
 import { assertMirrorFolder, SANDBOX_ROOT, validateMirrorPaths } from './backend/path-safety';
@@ -8,7 +8,7 @@ import { JobRepository } from './backend/repository';
 import { RobocopyService } from './backend/robocopy';
 import { runBackgroundWorker, runHeadlessWorkerOnce } from './backend/headless-worker';
 import { TaskSchedulerService } from './backend/task-scheduler';
-import { resolveUserDataPaths } from './backend/user-data';
+import { removeUserDataProfile, resolveUserDataPaths } from './backend/user-data';
 import {
   buildDiagnosticBundle,
   DiagnosticLogger,
@@ -106,7 +106,11 @@ const userDataPaths = resolveUserDataPaths(
 );
 const profileName = userDataPaths.profileName;
 const restrictToSandbox = !app.isPackaged;
-app.setPath('userData', userDataPaths.profileDirectory);
+const squirrelUserDataDirectory = join(app.getPath('temp'), `CodeMirror-squirrel-${process.pid}`);
+app.setPath(
+  'userData',
+  squirrelEvent ? squirrelUserDataDirectory : userDataPaths.profileDirectory,
+);
 const requestedProfile = process.argv.find((argument) => argument.startsWith('--profile='))
   ?.slice('--profile='.length);
 
@@ -135,10 +139,21 @@ app.whenReady().then(async () => {
               `--profile=${profileName}`,
             ],
           }),
+        async () => {
+          if (squirrelEvent === '--squirrel-uninstall' && app.isPackaged) {
+            await removeUserDataProfile(userDataPaths);
+          }
+        },
       );
+      await rm(squirrelUserDataDirectory, { recursive: true, force: true });
       app.exit(0);
     } catch (error) {
       console.error(`Squirrel lifecycle event ${squirrelEvent} failed:`, error);
+      try {
+        await rm(squirrelUserDataDirectory, { recursive: true, force: true });
+      } catch (cleanupError) {
+        console.error('Squirrel lifecycle temporary data cleanup failed:', cleanupError);
+      }
       app.exit(1);
     }
     return;

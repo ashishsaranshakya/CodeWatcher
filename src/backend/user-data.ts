@@ -1,4 +1,5 @@
-import { join, resolve } from 'node:path';
+import { rm } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 
 export interface UserDataPaths {
   rootDirectory: string;
@@ -33,4 +34,17 @@ export function resolveUserDataPaths(
     profileDirectory,
     databasePath: join(profileDirectory, 'codemirror.sqlite'),
   };
+}
+
+export async function removeUserDataProfile(paths: UserDataPaths): Promise<void> {
+  const rootDirectory = resolve(paths.rootDirectory);
+  const profileDirectory = resolve(paths.profileDirectory);
+  if (
+    paths.profileName === 'dev' ||
+    dirname(profileDirectory) !== rootDirectory ||
+    basename(profileDirectory) !== paths.profileName
+  ) {
+    throw new Error('Refusing to remove a profile outside its expected CodeMirror directory.');
+  }
+  await rm(profileDirectory, { recursive: true, force: true });
 }

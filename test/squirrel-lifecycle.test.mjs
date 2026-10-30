@@ -31,10 +31,13 @@ describe('Squirrel lifecycle', () => {
       'C:\\Users\\test\\AppData\\Local\\CodeMirror\\app-1.0.0\\CodeMirror.exe',
       async () => { calls.push('remove-owned-task'); },
       async (_executable, args) => calls.push(args),
+      async () => {},
+      async () => { calls.push('remove-installed-profile'); },
     );
     assert.deepEqual(calls, [
       'remove-owned-task',
       ['--removeShortcut', 'CodeMirror.exe'],
+      'remove-installed-profile',
     ]);
   });
 

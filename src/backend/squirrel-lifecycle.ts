@@ -48,6 +48,7 @@ export async function handleSquirrelEvent(
   removeOwnedTask: () => Promise<void>,
   updateRunner: SquirrelUpdateRunner = runUpdateExecutable,
   updateWorkerTask: () => Promise<void> = async () => {},
+  removeInstalledProfile: () => Promise<void> = async () => {},
 ): Promise<void> {
   if (event === '--squirrel-obsolete') return;
 
@@ -65,4 +66,5 @@ export async function handleSquirrelEvent(
 
   await removeOwnedTask();
   await updateRunner(updateExecutable, ['--removeShortcut', appName]);
+  await removeInstalledProfile();
 }
