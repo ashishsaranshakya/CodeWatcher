@@ -81,6 +81,7 @@ function createWindow(): void {
     minWidth: 760,
     minHeight: 560,
     show: false,
+    icon: join(app.getAppPath(), 'assets', 'CodeMirror.ico'),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       nodeIntegration: false,

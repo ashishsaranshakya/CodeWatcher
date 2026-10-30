@@ -1,17 +1,20 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { VitePlugin } from '@electron-forge/plugin-vite';
+import { join } from 'node:path';
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     extraResource: ['migrations'],
+    icon: join(__dirname, 'assets', 'CodeMirror'),
   },
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({
       name: 'CodeMirror',
       authors: 'CodeMirror',
+      setupIcon: join(__dirname, 'assets', 'CodeMirror.ico'),
     }),
   ],
   plugins: [
