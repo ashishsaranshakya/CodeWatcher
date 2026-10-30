@@ -213,6 +213,11 @@ app.whenReady().then(async () => {
     return app.getVersion();
   });
 
+  ipcMain.handle('app:get-runtime-info', (event) => {
+    assertMainFrame(event);
+    return { restrictToSandbox };
+  });
+
   ipcMain.handle('paths:validate', (event, source: unknown, destination: unknown) => {
     assertMainFrame(event);
     if (typeof source !== 'string' || typeof destination !== 'string') {

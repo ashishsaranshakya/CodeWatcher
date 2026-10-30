@@ -97,8 +97,8 @@ export default function ExclusionsEditor({ job, onSaved }: Props) {
   return (
     <section className="exclusions-editor" aria-label={`Exclusions for ${job.name}`}>
       <p className="form-note">
-        Built-in development exclusions apply to every job. Added rules only exclude files; there is no
-        include/override rule. Excluded files are not protected by this mirror.
+        Built-in exclusions apply to every job. Added rules only exclude files; there is no
+        include/override rule. Matching excluded files are omitted from this mirror.
       </p>
       <details className="inherited-rules">
         <summary>Built-in exclusions ({DEFAULT_EXCLUSIONS.length})</summary>

@@ -12,8 +12,13 @@ export interface PathValidationResult {
   reason?: string;
 }
 
+export interface RuntimeInfo {
+  restrictToSandbox: boolean;
+}
+
 export interface CodeMirrorApi {
   getVersion(): Promise<string>;
+  getRuntimeInfo(): Promise<RuntimeInfo>;
   validatePaths(source: string, destination: string): Promise<PathValidationResult>;
   listJobs(): Promise<MirrorJob[]>;
   listRunHistory(): Promise<RunHistoryEntry[]>;

@@ -3,6 +3,7 @@ import type { CodeMirrorApi } from './shared/api';
 
 const api: CodeMirrorApi = {
   getVersion: () => ipcRenderer.invoke('app:get-version'),
+  getRuntimeInfo: () => ipcRenderer.invoke('app:get-runtime-info'),
   validatePaths: (source, destination) =>
     ipcRenderer.invoke('paths:validate', source, destination),
   listJobs: () => ipcRenderer.invoke('jobs:list'),
