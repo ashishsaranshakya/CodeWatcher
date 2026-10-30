@@ -18,13 +18,10 @@ npm start
 `npm start` starts the foreground desktop app. Development data is stored in
 `%APPDATA%\CodeMirror\dev\`, while installed builds use
 `%APPDATA%\CodeMirror\<Windows-username>\`. Each profile has its own database,
-logs, run locks, worker process identity, and Task Scheduler task. The first
-launch for a profile copies the previous root-level SQLite database using
-SQLite's backup API and copies the remaining Electron user-data files
-(preferences, storage, and caches) without overwriting profile files. Transient
-lock files and run-lock state are not copied. The original root data remains
-untouched as a recovery copy. Test databases are created in a unique temporary
-directory and removed when each test exits.
+logs, Electron user data, run locks, worker process identity, and Task Scheduler
+task. Each app launch uses its profile directly; it does not migrate or copy
+data from the old root-level `%APPDATA%\CodeMirror` location. Test databases
+are created in a unique temporary directory and removed when each test exits.
 
 For development safety, source and destination folders are hard-restricted to
 `C:\Users\harsh\Desktop\CodeWatcher\sandbox`. The restriction is enforced in

@@ -1,8 +1,6 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-const PRE_PROFILE_TASK_NAME = 'CodeMirror Background Worker';
-const PRE_PROFILE_TASK_DESCRIPTION = 'Managed by CodeMirror. Do not edit or remove manually.';
 const COMMAND_TIMEOUT_MS = 20_000;
 const OUTPUT_LIMIT = 64 * 1024;
 
@@ -234,54 +232,9 @@ export class TaskSchedulerService {
     await runPowerShell(buildTaskSchedulerScript('stop', this.taskName, undefined, {}, this.profileName));
   }
 
-  async stopPreProfileTask(): Promise<void> {
-    await runPowerShell(
-      buildTaskSchedulerScript(
-        'stop',
-        PRE_PROFILE_TASK_NAME,
-        undefined,
-        {},
-        this.profileName,
-        PRE_PROFILE_TASK_DESCRIPTION,
-      ),
-    );
-  }
-
-  async removePreProfileTask(): Promise<void> {
-    await runPowerShell(
-      buildTaskSchedulerScript(
-        'remove',
-        PRE_PROFILE_TASK_NAME,
-        undefined,
-        {},
-        this.profileName,
-        PRE_PROFILE_TASK_DESCRIPTION,
-      ),
-    );
-  }
-
-  private async isPreProfileTaskRegistered(): Promise<boolean> {
-    return (
-      await runPowerShell(
-        buildTaskSchedulerScript(
-          'exists',
-          PRE_PROFILE_TASK_NAME,
-          undefined,
-          {},
-          this.profileName,
-          PRE_PROFILE_TASK_DESCRIPTION,
-        ),
-      )
-    ).includes('TASK_EXISTS');
-  }
-
   async refreshIfRegistered(command: ScheduledWorkerCommand): Promise<void> {
-    const hasProfileTask = await this.isRegistered();
-    const hasPreProfileTask = await this.isPreProfileTaskRegistered();
-    if (!hasProfileTask && !hasPreProfileTask) return;
-    if (hasProfileTask && await this.isRunning()) await this.stop();
-    if (hasPreProfileTask) await this.stopPreProfileTask();
+    if (!(await this.isRegistered())) return;
+    if (await this.isRunning()) await this.stop();
     await this.ensureRegistered(command, { runImmediately: false });
-    if (hasPreProfileTask) await this.removePreProfileTask();
   }
 }

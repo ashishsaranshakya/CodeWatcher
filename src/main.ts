@@ -8,7 +8,7 @@ import { JobRepository } from './backend/repository';
 import { RobocopyService } from './backend/robocopy';
 import { runBackgroundWorker, runHeadlessWorkerOnce } from './backend/headless-worker';
 import { TaskSchedulerService } from './backend/task-scheduler';
-import { migrateExistingUserData, resolveUserDataPaths } from './backend/user-data';
+import { resolveUserDataPaths } from './backend/user-data';
 import {
   buildDiagnosticBundle,
   DiagnosticLogger,
@@ -108,13 +108,6 @@ const restrictToSandbox = !app.isPackaged;
 app.setPath('userData', userDataPaths.profileDirectory);
 const requestedProfile = process.argv.find((argument) => argument.startsWith('--profile='))
   ?.slice('--profile='.length);
-const userDataMigration = squirrelEvent
-  ? Promise.resolve()
-  : migrateExistingUserData(userDataPaths);
-let userDataMigrationError: unknown;
-void userDataMigration.catch((error: unknown) => {
-  userDataMigrationError = error;
-});
 
 const hasSingleInstanceLock =
   isBackgroundWorker || Boolean(squirrelEvent) || app.requestSingleInstanceLock();
@@ -130,7 +123,6 @@ app.whenReady().then(async () => {
         process.execPath,
         async () => {
           await taskScheduler.remove();
-          await taskScheduler.removePreProfileTask();
         },
         undefined,
         () =>
@@ -153,8 +145,6 @@ app.whenReady().then(async () => {
   const migrationsDirectory = app.isPackaged
     ? join(process.resourcesPath, 'migrations')
     : join(app.getAppPath(), 'migrations');
-  if (userDataMigrationError) throw userDataMigrationError;
-  await userDataMigration;
   if (requestedProfile !== undefined && requestedProfile !== profileName) {
     throw new Error(
       `Worker profile mismatch: requested "${requestedProfile}", expected "${profileName}".`,
@@ -280,7 +270,6 @@ app.whenReady().then(async () => {
     if (enabled) {
       const updated = await service.setEnabled(jobId, true);
       try {
-        await taskScheduler.removePreProfileTask();
         const workerIsRunning = await taskScheduler.isRunning();
         await taskScheduler.ensureRegistered(workerCommand, {
           runImmediately: !workerIsRunning,
@@ -304,7 +293,6 @@ app.whenReady().then(async () => {
     if (!remainingEnabledJobs) {
       try {
         await taskScheduler.remove();
-        await taskScheduler.removePreProfileTask();
       } catch (error) {
         try {
           await service.setEnabled(jobId, true);
@@ -334,7 +322,6 @@ app.whenReady().then(async () => {
     if (!job) throw new Error('The mirror job no longer exists.');
     if (job.enabled && service.list().filter((candidate) => candidate.enabled).length === 1) {
       await taskScheduler.remove();
-      await taskScheduler.removePreProfileTask();
       try {
         service.delete(jobId);
       } catch (error) {
@@ -396,7 +383,6 @@ app.whenReady().then(async () => {
   createWindow();
   void (async () => {
     const hasEnabledJobs = requireJobService().list().some((job) => job.enabled);
-    await taskScheduler.removePreProfileTask();
     const taskIsRegistered = await taskScheduler.isRegistered();
     if (hasEnabledJobs) {
       const workerIsRunning = taskIsRegistered && await taskScheduler.isRunning();
