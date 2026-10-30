@@ -106,6 +106,73 @@ export async function assertSandboxFolder(folder: string): Promise<string> {
   return resolved.path;
 }
 
+export async function assertMirrorFolders(
+  source: string,
+  destination: string,
+  allowMissingDestination = false,
+  restrictToSandbox = true,
+): Promise<{ sourcePath: string; destinationPath: string }> {
+  if (restrictToSandbox) {
+    return assertSandboxFolders(source, destination, allowMissingDestination);
+  }
+  const validation = validateMirrorPaths(source, destination);
+  if (!validation.valid) throw new Error(validation.reason);
+  const resolvedSource = await resolveAnyCandidate(source);
+  const resolvedDestination = await resolveAnyCandidate(destination);
+  if (!resolvedSource.exists) throw new Error('The source folder must exist.');
+  if (!resolvedDestination.exists && !allowMissingDestination) {
+    throw new Error('The destination folder must exist.');
+  }
+  if (!(await stat(resolvedSource.path)).isDirectory()) {
+    throw new Error('The source must be a folder.');
+  }
+  if (resolvedDestination.exists && !(await stat(resolvedDestination.path)).isDirectory()) {
+    throw new Error('The destination must be a folder.');
+  }
+  if (!validateMirrorPaths(resolvedSource.path, resolvedDestination.path).valid) {
+    throw new Error('Resolved source and destination folders overlap.');
+  }
+  return { sourcePath: resolvedSource.path, destinationPath: resolvedDestination.path };
+}
+
+export async function assertMirrorFolder(folder: string, restrictToSandbox = true): Promise<string> {
+  if (restrictToSandbox) return assertSandboxFolder(folder);
+  const resolved = await resolveAnyCandidate(folder);
+  if (!resolved.exists) throw new Error('The selected folder does not exist.');
+  if (!(await stat(resolved.path)).isDirectory()) throw new Error('The selected path is not a folder.');
+  return resolved.path;
+}
+
+async function resolveAnyCandidate(candidate: string): Promise<{ path: string; exists: boolean }> {
+  let existing = path.win32.normalize(candidate);
+  const missingSegments: string[] = [];
+  while (true) {
+    try {
+      const realExisting = await realpath(existing);
+      if (missingSegments.length > 0) {
+        if (!(await stat(realExisting)).isDirectory()) {
+          throw new Error('The destination parent must be an existing folder.');
+        }
+        return { path: path.win32.join(realExisting, ...missingSegments.reverse()), exists: false };
+      }
+      return { path: realExisting, exists: true };
+    } catch (error) {
+      if (
+        typeof error !== 'object' ||
+        error === null ||
+        !('code' in error) ||
+        !['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
+      ) {
+        throw error;
+      }
+      const parent = path.win32.dirname(existing);
+      if (parent === existing) throw error;
+      missingSegments.push(path.win32.basename(existing));
+      existing = parent;
+    }
+  }
+}
+
 async function resolveSandboxCandidate(
   candidate: string,
   realRoot: string,

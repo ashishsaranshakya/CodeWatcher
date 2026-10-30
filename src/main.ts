@@ -1,17 +1,20 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { userInfo } from 'node:os';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { JobService } from './backend/jobs';
-import { assertSandboxFolder, SANDBOX_ROOT, validateMirrorPaths } from './backend/path-safety';
+import { assertMirrorFolder, SANDBOX_ROOT, validateMirrorPaths } from './backend/path-safety';
 import { JobRepository } from './backend/repository';
 import { RobocopyService } from './backend/robocopy';
 import { runBackgroundWorker, runHeadlessWorkerOnce } from './backend/headless-worker';
 import { TaskSchedulerService } from './backend/task-scheduler';
+import { migrateExistingUserData, resolveUserDataPaths } from './backend/user-data';
 import {
   buildDiagnosticBundle,
   DiagnosticLogger,
   readDiagnosticLogs,
 } from './backend/diagnostics';
+import { handleSquirrelEvent, type SquirrelEvent } from './backend/squirrel-lifecycle';
 import type { CreateJobInput, ExclusionRule } from './shared/jobs';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -24,6 +27,14 @@ let quitAfterStopping = false;
 const isOneShotBackgroundWorker = process.argv.includes('--background-worker-once');
 const isBackgroundWorker =
   isOneShotBackgroundWorker || process.argv.includes('--background-worker');
+const squirrelEvent = process.argv.find((argument): argument is SquirrelEvent =>
+  [
+    '--squirrel-install',
+    '--squirrel-updated',
+    '--squirrel-uninstall',
+    '--squirrel-obsolete',
+  ].includes(argument),
+);
 const backgroundWorkerAbort = new AbortController();
 let backgroundWorkerStopping = false;
 
@@ -87,29 +98,85 @@ function createWindow(): void {
 }
 
 app.setName('CodeMirror');
-app.setPath('userData', join(app.getPath('appData'), 'CodeMirror'));
+const userDataPaths = resolveUserDataPaths(
+  process.env.APPDATA ?? app.getPath('appData'),
+  userInfo().username,
+  app.isPackaged,
+);
+const profileName = userDataPaths.profileName;
+const restrictToSandbox = !app.isPackaged;
+app.setPath('userData', userDataPaths.profileDirectory);
+const requestedProfile = process.argv.find((argument) => argument.startsWith('--profile='))
+  ?.slice('--profile='.length);
+const userDataMigration = squirrelEvent
+  ? Promise.resolve()
+  : migrateExistingUserData(userDataPaths);
+let userDataMigrationError: unknown;
+void userDataMigration.catch((error: unknown) => {
+  userDataMigrationError = error;
+});
 
-const hasSingleInstanceLock = isBackgroundWorker || app.requestSingleInstanceLock();
+const hasSingleInstanceLock =
+  isBackgroundWorker || Boolean(squirrelEvent) || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;
+  if (squirrelEvent) {
+    try {
+      const taskScheduler = new TaskSchedulerService(profileName);
+      await handleSquirrelEvent(
+        squirrelEvent,
+        process.execPath,
+        async () => {
+          await taskScheduler.remove();
+          await taskScheduler.removePreProfileTask();
+        },
+        undefined,
+        () =>
+          taskScheduler.refreshIfRegistered({
+            executable: process.execPath,
+            args: [
+              ...(!app.isPackaged ? [app.getAppPath()] : []),
+              '--background-worker',
+              `--profile=${profileName}`,
+            ],
+          }),
+      );
+      app.exit(0);
+    } catch (error) {
+      console.error(`Squirrel lifecycle event ${squirrelEvent} failed:`, error);
+      app.exit(1);
+    }
+    return;
+  }
   const migrationsDirectory = app.isPackaged
     ? join(process.resourcesPath, 'migrations')
     : join(app.getAppPath(), 'migrations');
-  const databasePath = join(app.getPath('userData'), 'codemirror.sqlite');
+  if (userDataMigrationError) throw userDataMigrationError;
+  await userDataMigration;
+  if (requestedProfile !== undefined && requestedProfile !== profileName) {
+    throw new Error(
+      `Worker profile mismatch: requested "${requestedProfile}", expected "${profileName}".`,
+    );
+  }
+  const databasePath = userDataPaths.databasePath;
   if (isBackgroundWorker) {
     const worker = isOneShotBackgroundWorker
-      ? runHeadlessWorkerOnce(databasePath, migrationsDirectory)
+      ? runHeadlessWorkerOnce(databasePath, migrationsDirectory, {
+          profileName,
+          restrictToSandbox,
+        })
       : runBackgroundWorker(
           databasePath,
           migrationsDirectory,
           backgroundWorkerAbort.signal,
+          { profileName, restrictToSandbox },
         );
     void worker.then(
       (result) => {
         console.log(
-          `Background worker ${result.status}: ${result.jobCount} enabled job(s), ${result.failedJobCount} failure(s).`,
+          `Background worker (profile ${profileName}) ${result.status}: ${result.jobCount} enabled job(s), ${result.failedJobCount} failure(s).`,
         );
         app.exit(result.failedJobCount > 0 ? 1 : 0);
       },
@@ -122,15 +189,16 @@ app.whenReady().then(() => {
   }
 
   jobRepository = new JobRepository(databasePath, migrationsDirectory);
-  jobService = new JobService(jobRepository);
-  robocopyService = new RobocopyService(jobRepository);
+  jobService = new JobService(jobRepository, restrictToSandbox);
+  robocopyService = new RobocopyService(jobRepository, undefined, restrictToSandbox, profileName);
   const diagnosticLogger = new DiagnosticLogger(jobRepository.getDiagnosticsDirectory());
-  const taskScheduler = new TaskSchedulerService();
+  const taskScheduler = new TaskSchedulerService(profileName);
   const workerCommand = {
     executable: process.execPath,
     args: [
       ...(!app.isPackaged ? [app.getAppPath()] : []),
       '--background-worker',
+      `--profile=${profileName}`,
     ],
   };
 
@@ -212,6 +280,7 @@ app.whenReady().then(() => {
     if (enabled) {
       const updated = await service.setEnabled(jobId, true);
       try {
+        await taskScheduler.removePreProfileTask();
         const workerIsRunning = await taskScheduler.isRunning();
         await taskScheduler.ensureRegistered(workerCommand, {
           runImmediately: !workerIsRunning,
@@ -235,6 +304,7 @@ app.whenReady().then(() => {
     if (!remainingEnabledJobs) {
       try {
         await taskScheduler.remove();
+        await taskScheduler.removePreProfileTask();
       } catch (error) {
         try {
           await service.setEnabled(jobId, true);
@@ -264,6 +334,7 @@ app.whenReady().then(() => {
     if (!job) throw new Error('The mirror job no longer exists.');
     if (job.enabled && service.list().filter((candidate) => candidate.enabled).length === 1) {
       await taskScheduler.remove();
+      await taskScheduler.removePreProfileTask();
       try {
         service.delete(jobId);
       } catch (error) {
@@ -313,26 +384,27 @@ app.whenReady().then(() => {
     assertMainFrame(event);
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory'],
-      defaultPath: SANDBOX_ROOT,
+      defaultPath: restrictToSandbox ? SANDBOX_ROOT : undefined,
       title: 'Select a folder',
     });
     if (result.canceled) return null;
     const selected = result.filePaths[0];
     if (!selected) return null;
-    return assertSandboxFolder(selected);
+    return assertMirrorFolder(selected, restrictToSandbox);
   });
 
   createWindow();
   void (async () => {
     const hasEnabledJobs = requireJobService().list().some((job) => job.enabled);
+    await taskScheduler.removePreProfileTask();
     const taskIsRegistered = await taskScheduler.isRegistered();
     if (hasEnabledJobs) {
       const workerIsRunning = taskIsRegistered && await taskScheduler.isRunning();
       if (!taskIsRegistered || !workerIsRunning) {
         await taskScheduler.ensureRegistered(workerCommand);
       }
-    } else if (!hasEnabledJobs && taskIsRegistered) {
-      await taskScheduler.remove();
+    } else {
+      if (taskIsRegistered) await taskScheduler.remove();
     }
   })().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
@@ -342,6 +414,11 @@ app.whenReady().then(() => {
       `The saved automatic-mirroring settings could not be reconciled with Task Scheduler.\n\n${message}`,
     );
   });
+}).catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error('CodeMirror startup failed:', error);
+  dialog.showErrorBox('CodeMirror could not start', message);
+  app.exit(1);
 });
 
 app.on('before-quit', (event) => {

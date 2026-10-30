@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
-import { assertSandboxFolders, pathsOverlap, validateMirrorPaths } from './path-safety.ts';
+import { assertMirrorFolders, pathsOverlap, validateMirrorPaths } from './path-safety.ts';
 import type { JobRepository } from './repository.ts';
 import type { CreateJobInput, ExclusionRule, MirrorJob } from '../shared/jobs.ts';
 import { validateExclusionRule } from './exclusions.ts';
@@ -8,9 +8,11 @@ import { createSyncPreview } from './preview.ts';
 
 export class JobService {
   private readonly repository: JobRepository;
+  private readonly restrictToSandbox: boolean;
 
-  constructor(repository: JobRepository) {
+  constructor(repository: JobRepository, restrictToSandbox = true) {
     this.repository = repository;
+    this.restrictToSandbox = restrictToSandbox;
   }
 
   list(): MirrorJob[] {
@@ -21,7 +23,7 @@ export class JobService {
     const job = this.repository.list().find((candidate) => candidate.id === jobId);
     if (!job) throw new Error('The mirror job no longer exists.');
     if (enabled) {
-      await assertSandboxFolders(job.sourcePath, job.destinationPath);
+      await assertMirrorFolders(job.sourcePath, job.destinationPath, false, this.restrictToSandbox);
     }
     if (!this.repository.setEnabled(jobId, enabled)) {
       throw new Error('The mirror job could not be updated.');
@@ -52,7 +54,7 @@ export class JobService {
     if (!job) throw new Error('The mirror job no longer exists.');
     const pathValidation = validateMirrorPaths(job.sourcePath, job.destinationPath);
     if (!pathValidation.valid) throw new Error(pathValidation.reason);
-    const safePaths = await assertSandboxFolders(job.sourcePath, job.destinationPath);
+    const safePaths = await assertMirrorFolders(job.sourcePath, job.destinationPath, false, this.restrictToSandbox);
     return createSyncPreview(safePaths.sourcePath, safePaths.destinationPath, job.exclusions);
   }
 
@@ -84,7 +86,7 @@ export class JobService {
     if (destinationStat && !destinationStat.isDirectory()) {
       throw new Error('The destination path exists but is not a folder.');
     }
-    const safePaths = await assertSandboxFolders(source, destination, true);
+    const safePaths = await assertMirrorFolders(source, destination, true, this.restrictToSandbox);
 
     const existingJobs = this.repository.list();
     if (existingJobs.some((job) => job.name.toLocaleLowerCase('en-US') === name.toLocaleLowerCase('en-US'))) {

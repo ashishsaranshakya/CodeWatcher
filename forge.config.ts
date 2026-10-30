@@ -11,6 +11,7 @@ const config: ForgeConfig = {
   makers: [
     new MakerSquirrel({
       name: 'CodeMirror',
+      authors: 'CodeMirror',
     }),
   ],
   plugins: [

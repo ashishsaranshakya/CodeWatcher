@@ -3,7 +3,13 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { assertSandboxFolder, assertSandboxFolders, SANDBOX_ROOT } from '../src/backend/path-safety.ts';
+import {
+  assertMirrorFolder,
+  assertMirrorFolders,
+  assertSandboxFolder,
+  assertSandboxFolders,
+  SANDBOX_ROOT,
+} from '../src/backend/path-safety.ts';
 
 describe('development sandbox confinement', () => {
   it('accepts distinct real folders below the sandbox', async () => {
@@ -17,6 +23,25 @@ describe('development sandbox confinement', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  describe('packaged folder validation', () => {
+    it('allows valid user folders outside the development sandbox', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'codemirror-production-paths-'));
+      try {
+        const source = join(root, 'source');
+        const destination = join(root, 'destination');
+        mkdirSync(source);
+        mkdirSync(destination);
+        assert.equal(await assertMirrorFolder(source, false), source);
+        assert.deepEqual(await assertMirrorFolders(source, destination, false, false), {
+          sourcePath: source,
+          destinationPath: destination,
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 
   it('rejects a selected folder outside the sandbox', async () => {

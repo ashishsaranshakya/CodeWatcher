@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-const TASK_DESCRIPTION = 'Managed by CodeMirror. Do not edit or remove manually.';
+const PRE_PROFILE_TASK_NAME = 'CodeMirror Background Worker';
+const PRE_PROFILE_TASK_DESCRIPTION = 'Managed by CodeMirror. Do not edit or remove manually.';
 const COMMAND_TIMEOUT_MS = 20_000;
 const OUTPUT_LIMIT = 64 * 1024;
 
@@ -13,6 +14,17 @@ export interface ScheduledWorkerCommand {
 export interface TaskRegistrationOptions {
   triggerAtLogon?: boolean;
   runImmediately?: boolean;
+}
+
+export function getProfileTaskName(profileName: string): string {
+  if (
+    !profileName.trim() ||
+    profileName.length > 64 ||
+    /[\\/:*?"<>|\u0000-\u001f]/.test(profileName)
+  ) {
+    throw new Error('Profile name cannot be used in a Task Scheduler task name.');
+  }
+  return `CodeMirror-${profileName}-Background-Worker`;
 }
 
 function powershellLiteral(value: string): string {
@@ -37,13 +49,15 @@ export function quoteWindowsArgument(value: string): string {
 }
 
 export function buildTaskSchedulerScript(
-  operation: 'exists' | 'running' | 'remove' | 'register',
+  operation: 'exists' | 'running' | 'stop' | 'remove' | 'register',
   taskName: string,
   command?: ScheduledWorkerCommand,
   options: TaskRegistrationOptions = {},
+  profileName = 'dev',
+  ownershipDescription = `Managed by CodeMirror profile "${profileName}". Do not edit or remove manually.`,
 ): string {
   const taskNameLiteral = powershellLiteral(taskName);
-  const markerLiteral = powershellLiteral(TASK_DESCRIPTION);
+  const markerLiteral = powershellLiteral(ownershipDescription);
   const common = [
     "$ErrorActionPreference = 'Stop'",
     "$service = New-Object -ComObject 'Schedule.Service'",
@@ -65,10 +79,16 @@ export function buildTaskSchedulerScript(
       "if ($existing -and ($existing.State -eq 2 -or $existing.State -eq 4)) { 'TASK_RUNNING' } else { 'TASK_NOT_RUNNING' }",
     ].join('\n');
   }
+  if (operation === 'stop') {
+    return [
+      ...common,
+      'if ($existing -and ($existing.State -eq 2 -or $existing.State -eq 4)) { $existing.Stop(0); "TASK_STOPPED" } else { "TASK_NOT_RUNNING" }',
+    ].join('\n');
+  }
   if (operation === 'remove') {
     return [
       ...common,
-      'if ($existing) { $root.DeleteTask($taskName, 0); "TASK_REMOVED" } else { "TASK_MISSING" }',
+      'if ($existing) { if ($existing.State -eq 2 -or $existing.State -eq 4) { $existing.Stop(0) }; $root.DeleteTask($taskName, 0); "TASK_REMOVED" } else { "TASK_MISSING" }',
     ].join('\n');
   }
   if (!command) throw new Error('A worker command is required to register the task.');
@@ -165,23 +185,29 @@ async function runPowerShell(script: string): Promise<string> {
 
 export class TaskSchedulerService {
   private readonly taskName: string;
+  private readonly profileName: string;
 
-  constructor(taskName = 'CodeMirror Background Worker') {
-    if (!/^CodeMirror(?:-Test-[A-Za-z0-9-]+| Background Worker)$/.test(taskName)) {
+  constructor(profileName = 'dev') {
+    if (
+      !profileName.trim() ||
+      profileName.length > 64 ||
+      /[\\/:*?"<>|\u0000-\u001f]/.test(profileName)
+    ) {
       throw new Error('Task name must use a CodeMirror-owned task name.');
     }
-    this.taskName = taskName;
+    this.profileName = profileName;
+    this.taskName = getProfileTaskName(profileName);
   }
 
   async isRegistered(): Promise<boolean> {
     return (
-      await runPowerShell(buildTaskSchedulerScript('exists', this.taskName))
+      await runPowerShell(buildTaskSchedulerScript('exists', this.taskName, undefined, {}, this.profileName))
     ).includes('TASK_EXISTS');
   }
 
   async isRunning(): Promise<boolean> {
     return (
-      await runPowerShell(buildTaskSchedulerScript('running', this.taskName))
+      await runPowerShell(buildTaskSchedulerScript('running', this.taskName, undefined, {}, this.profileName))
     ).includes('TASK_RUNNING');
   }
 
@@ -190,15 +216,72 @@ export class TaskSchedulerService {
     options: TaskRegistrationOptions = {},
   ): Promise<void> {
     await runPowerShell(
-      buildTaskSchedulerScript('register', this.taskName, command, {
-        triggerAtLogon: true,
-        runImmediately: true,
-        ...options,
-      }),
+      buildTaskSchedulerScript(
+        'register',
+        this.taskName,
+        command,
+        { triggerAtLogon: true, runImmediately: true, ...options },
+        this.profileName,
+      ),
     );
   }
 
   async remove(): Promise<void> {
-    await runPowerShell(buildTaskSchedulerScript('remove', this.taskName));
+    await runPowerShell(buildTaskSchedulerScript('remove', this.taskName, undefined, {}, this.profileName));
+  }
+
+  async stop(): Promise<void> {
+    await runPowerShell(buildTaskSchedulerScript('stop', this.taskName, undefined, {}, this.profileName));
+  }
+
+  async stopPreProfileTask(): Promise<void> {
+    await runPowerShell(
+      buildTaskSchedulerScript(
+        'stop',
+        PRE_PROFILE_TASK_NAME,
+        undefined,
+        {},
+        this.profileName,
+        PRE_PROFILE_TASK_DESCRIPTION,
+      ),
+    );
+  }
+
+  async removePreProfileTask(): Promise<void> {
+    await runPowerShell(
+      buildTaskSchedulerScript(
+        'remove',
+        PRE_PROFILE_TASK_NAME,
+        undefined,
+        {},
+        this.profileName,
+        PRE_PROFILE_TASK_DESCRIPTION,
+      ),
+    );
+  }
+
+  private async isPreProfileTaskRegistered(): Promise<boolean> {
+    return (
+      await runPowerShell(
+        buildTaskSchedulerScript(
+          'exists',
+          PRE_PROFILE_TASK_NAME,
+          undefined,
+          {},
+          this.profileName,
+          PRE_PROFILE_TASK_DESCRIPTION,
+        ),
+      )
+    ).includes('TASK_EXISTS');
+  }
+
+  async refreshIfRegistered(command: ScheduledWorkerCommand): Promise<void> {
+    const hasProfileTask = await this.isRegistered();
+    const hasPreProfileTask = await this.isPreProfileTaskRegistered();
+    if (!hasProfileTask && !hasPreProfileTask) return;
+    if (hasProfileTask && await this.isRunning()) await this.stop();
+    if (hasPreProfileTask) await this.stopPreProfileTask();
+    await this.ensureRegistered(command, { runImmediately: false });
+    if (hasPreProfileTask) await this.removePreProfileTask();
   }
 }

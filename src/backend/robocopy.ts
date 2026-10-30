@@ -10,7 +10,7 @@ import type {
   SyncTrigger,
 } from '../shared/jobs.ts';
 import { DEFAULT_EXCLUSIONS, isExcluded } from './exclusions.ts';
-import { assertSandboxFolders, validateMirrorPaths } from './path-safety.ts';
+import { assertMirrorFolders, validateMirrorPaths } from './path-safety.ts';
 import { acquireProcessLock } from './process-lock.ts';
 import type { JobRepository } from './repository.ts';
 import { DiagnosticLogger } from './diagnostics.ts';
@@ -224,6 +224,8 @@ function readJob(repository: JobRepository, jobId: string): MirrorJob {
 export class RobocopyService {
   private readonly repository: JobRepository;
   private readonly timeoutMs: number;
+  private readonly restrictToSandbox: boolean;
+  private readonly profileName: string;
   private readonly logger: DiagnosticLogger;
   private readonly active = new Map<string, ChildProcessWithoutNullStreams>();
   private readonly activeJobs = new Set<string>();
@@ -231,8 +233,15 @@ export class RobocopyService {
   private readonly activeRuns = new Map<string, Promise<SyncRunResult>>();
   private stopping = false;
 
-  constructor(repository: JobRepository, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  constructor(
+    repository: JobRepository,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    restrictToSandbox = true,
+    profileName = 'dev',
+  ) {
     this.repository = repository;
+    this.restrictToSandbox = restrictToSandbox;
+    this.profileName = profileName;
     this.logger = new DiagnosticLogger(repository.getDiagnosticsDirectory());
     this.timeoutMs = Number.isFinite(timeoutMs)
       ? Math.min(Math.max(1000, timeoutMs), DEFAULT_TIMEOUT_MS)
@@ -261,16 +270,21 @@ export class RobocopyService {
     let outputTruncated = false;
     let processLock: ReturnType<typeof acquireProcessLock> | undefined;
 
-    this.logger.info('mirror_started', { runId, jobId, trigger });
+    this.logger.info('mirror_started', { profile: this.profileName, runId, jobId, trigger });
     try {
       processLock = acquireProcessLock(
         this.repository.getRunLockDirectory(),
-        `job:${jobId}`,
+        `profile:${this.profileName}:job:${jobId}`,
       );
       const job = readJob(this.repository, jobId);
       const pathValidation = validateMirrorPaths(job.sourcePath, job.destinationPath);
       if (!pathValidation.valid) throw new Error(pathValidation.reason);
-      const safePaths = await assertSandboxFolders(job.sourcePath, job.destinationPath);
+      const safePaths = await assertMirrorFolders(
+        job.sourcePath,
+        job.destinationPath,
+        false,
+        this.restrictToSandbox,
+      );
       if (this.stopping || this.cancelledJobs.has(jobId)) {
         outcome = 'cancelled';
         summary = 'The copy was cancelled before Robocopy started.';
@@ -334,6 +348,7 @@ export class RobocopyService {
     });
 
     this.logger.info('mirror_finished', {
+      profile: this.profileName,
       runId,
       jobId,
       trigger,

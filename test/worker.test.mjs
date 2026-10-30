@@ -148,7 +148,7 @@ describe('background worker foundation', () => {
     mkdirSync(appDataPath);
     const child = spawn(
       join(process.cwd(), 'node_modules', 'electron', 'dist', 'electron.exe'),
-      [process.cwd(), '--background-worker-once'],
+      [process.cwd(), '--background-worker-once', '--profile=dev'],
       {
         env: { ...process.env, APPDATA: appDataPath },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -166,7 +166,7 @@ describe('background worker foundation', () => {
     try {
       const [code] = await closed;
       assert.equal(code, 0, `${stdout}\n${stderr}`);
-      assert.match(stdout, /Background worker completed: 0 enabled job\(s\), 0 failure\(s\)/);
+      assert.match(stdout, /Background worker \(profile dev\) completed: 0 enabled job\(s\), 0 failure\(s\)/);
     } finally {
       clearTimeout(timeout);
       if (child.exitCode === null && child.signalCode === null) {

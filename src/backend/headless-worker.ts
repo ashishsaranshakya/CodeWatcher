@@ -24,6 +24,8 @@ export interface HeadlessWorkerResult {
 }
 
 export interface BackgroundWorkerOptions {
+  profileName?: string;
+  restrictToSandbox?: boolean;
   debounceMs?: number;
   maxWaitMs?: number;
   refreshMs?: number;
@@ -73,6 +75,7 @@ async function runEnabledJobs(
   jobs: readonly MirrorJob[],
   service: RobocopyService,
   trigger: 'startup' | 'watcher' | 'daily' | 'one-shot',
+  profileName: string,
   logger: DiagnosticLogger,
   signal?: AbortSignal,
   maxRetries = 0,
@@ -85,6 +88,7 @@ async function runEnabledJobs(
         try {
           const result = await service.runNow(job.id, trigger);
           logger.info('mirror_attempt_completed', {
+            profile: profileName,
             trigger,
             jobId: job.id,
             attempt: attempt + 1,
@@ -94,6 +98,7 @@ async function runEnabledJobs(
           if (attempt === maxRetries || signal?.aborted) return 1;
         } catch (error) {
           logger.error('mirror_attempt_failed', {
+            profile: profileName,
             trigger,
             jobId: job.id,
             attempt: attempt + 1,
@@ -113,11 +118,16 @@ async function runEnabledJobs(
 export async function runHeadlessWorkerOnce(
   databasePath: string,
   migrationsDirectory: string,
+  options: Pick<BackgroundWorkerOptions, 'profileName' | 'restrictToSandbox'> = {},
 ): Promise<HeadlessWorkerResult> {
+  const profileName = options.profileName ?? 'dev';
   const repository = new JobRepository(databasePath, migrationsDirectory);
   let workerLock: ProcessLock;
   try {
-    workerLock = acquireProcessLock(repository.getRunLockDirectory(), 'background-worker');
+    workerLock = acquireProcessLock(
+      repository.getRunLockDirectory(),
+      `profile:${profileName}:background-worker`,
+    );
   } catch (error) {
     repository.close();
     if (error instanceof ProcessLockUnavailableError) {
@@ -127,13 +137,14 @@ export async function runHeadlessWorkerOnce(
   }
 
   const logger = new DiagnosticLogger(repository.getDiagnosticsDirectory());
-  logger.info('background_worker_started', { mode: 'one-shot' });
+  logger.info('background_worker_started', { mode: 'one-shot', profile: profileName });
   try {
     const jobs = repository.list().filter((job) => job.enabled);
-    const service = new RobocopyService(repository);
-    const failedJobCount = await runEnabledJobs(jobs, service, 'one-shot', logger);
+    const service = new RobocopyService(repository, undefined, options.restrictToSandbox, profileName);
+    const failedJobCount = await runEnabledJobs(jobs, service, 'one-shot', profileName, logger);
     const result = { status: 'completed' as const, jobCount: jobs.length, failedJobCount };
     logger.info('background_worker_stopped', {
+      profile: profileName,
       status: result.status,
       jobCount: result.jobCount,
       failedJobCount: result.failedJobCount,
@@ -151,10 +162,14 @@ export async function runBackgroundWorker(
   signal: AbortSignal,
   options: BackgroundWorkerOptions = {},
 ): Promise<HeadlessWorkerResult> {
+  const profileName = options.profileName ?? 'dev';
   const repository = new JobRepository(databasePath, migrationsDirectory);
   let workerLock: ProcessLock;
   try {
-    workerLock = acquireProcessLock(repository.getRunLockDirectory(), 'background-worker');
+    workerLock = acquireProcessLock(
+      repository.getRunLockDirectory(),
+      `profile:${profileName}:background-worker`,
+    );
   } catch (error) {
     repository.close();
     if (error instanceof ProcessLockUnavailableError) {
@@ -163,9 +178,9 @@ export async function runBackgroundWorker(
     throw error;
   }
 
-  const service = new RobocopyService(repository);
+  const service = new RobocopyService(repository, undefined, options.restrictToSandbox, profileName);
   const logger = new DiagnosticLogger(repository.getDiagnosticsDirectory());
-  logger.info('background_worker_started', { mode: 'continuous' });
+  logger.info('background_worker_started', { mode: 'continuous', profile: profileName });
   const watchers = new Map<string, { signature: string; watcher: FSWatcher }>();
   const pending = new Map<string, PendingChange>();
   const debounceMs = Math.max(0, options.debounceMs ?? DEFAULT_DEBOUNCE_MS);
@@ -208,6 +223,7 @@ export async function runBackgroundWorker(
       });
       watcher.on('error', (error) => {
         logger.warning('source_watcher_failed', {
+          profile: profileName,
           jobId: job.id,
           message: error.message,
         });
@@ -217,6 +233,7 @@ export async function runBackgroundWorker(
       watchers.set(job.id, { signature, watcher });
     } catch (error) {
       logger.warning('source_watcher_unavailable', {
+        profile: profileName,
         jobId: job.id,
         message: error instanceof Error ? error.message : String(error),
       });
@@ -269,6 +286,7 @@ export async function runBackgroundWorker(
         [job],
         service,
         'watcher',
+        profileName,
         logger,
         signal,
         retryDelaysMs.length,
@@ -283,6 +301,7 @@ export async function runBackgroundWorker(
       enabledJobs,
       service,
       'daily',
+      profileName,
       logger,
       signal,
       retryDelaysMs.length,
@@ -311,6 +330,7 @@ export async function runBackgroundWorker(
       workerLock.heartbeat();
     } catch (error) {
       logger.error('background_worker_cycle_failed', {
+        profile: profileName,
         message: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -336,6 +356,7 @@ export async function runBackgroundWorker(
       enabledJobs,
       service,
       'startup',
+      profileName,
       logger,
       signal,
       retryDelaysMs.length,
@@ -361,6 +382,7 @@ export async function runBackgroundWorker(
       failedJobCount,
     };
     logger.info('background_worker_stopped', {
+      profile: profileName,
       status: result.status,
       jobCount: result.jobCount,
       failedJobCount: result.failedJobCount,

@@ -15,15 +15,23 @@ npm run typecheck
 npm start
 ```
 
-`npm start` starts the foreground desktop app. Settings are stored in
-`%APPDATA%\CodeMirror\codemirror.sqlite`; test databases are created in a
-unique temporary directory and removed when each test exits.
+`npm start` starts the foreground desktop app. Development data is stored in
+`%APPDATA%\CodeMirror\dev\`, while installed builds use
+`%APPDATA%\CodeMirror\<Windows-username>\`. Each profile has its own database,
+logs, run locks, worker process identity, and Task Scheduler task. The first
+launch for a profile copies the previous root-level SQLite database using
+SQLite's backup API and copies the remaining Electron user-data files
+(preferences, storage, and caches) without overwriting profile files. Transient
+lock files and run-lock state are not copied. The original root data remains
+untouched as a recovery copy. Test databases are created in a unique temporary
+directory and removed when each test exits.
 
 For development safety, source and destination folders are hard-restricted to
 `C:\Users\harsh\Desktop\CodeWatcher\sandbox`. The restriction is enforced in
 the main process after resolving paths; folder selections outside that tree
-are rejected. There is a TODO next to the hard-coded path to remove this
-restriction for the final product.
+are rejected. Installed builds allow valid user-selected folders outside the
+development sandbox while still validating absolute paths, folder existence,
+and source/destination overlap.
 
 The current UI supports manual, foreground Robocopy mirrors (`/MIR`) and a
 separate read-only preview. A mirror can overwrite matching destination files
@@ -32,13 +40,15 @@ without showing the preview or asking for confirmation. The preview reports
 potential deletions and warns when they exceed 100 files or 10% of the
 destination, but this threshold is informational only and never blocks a
 mirror. The final product will not require deletion approval or enforce a
-deletion threshold. The source and existing destination must be inside the
-sandbox.
+deletion threshold. Development mirrors require both folders to be inside the
+sandbox; installed builds accept user-selected folders outside it.
 
 Jobs are created with automation disabled. Enabling automatic mirroring
-registers a CodeMirror-owned Windows Task Scheduler logon task and launches a
-headless worker. The worker mirrors enabled jobs at startup, watches source
-folders recursively, coalesces changes after 10 seconds of quiet (with a
+registers a profile-specific CodeMirror-owned Windows Task Scheduler logon
+task (for example, `CodeMirror-dev-Background-Worker`) and launches a
+headless worker with an explicit `--profile` argument. The worker mirrors
+enabled jobs at startup, watches source folders recursively, coalesces changes
+after 10 seconds of quiet (with a
 60-second maximum wait), retries failures after 5, 15, and 60 seconds, and
 performs a full reconciliation daily. If a watcher is unavailable, daily
 reconciliation remains the backstop. The worker uses cross-process locks to
@@ -51,8 +61,9 @@ deletion prompt or deletion-threshold block.
 
 The app shows recent local mirror runs, including their trigger, result,
 duration, and summary. History is retained to the newest 1,000 runs. Structured
-application logs are stored under `%APPDATA%\CodeMirror\logs` and rotate at
-2 MB per file with three backups. Diagnostic exports include up to 100 recent
+application logs are stored under the active profile's `logs` folder (for
+example, `%APPDATA%\CodeMirror\dev\logs`) and rotate at 2 MB per file with
+three backups. Diagnostic exports include up to 100 recent
 runs and 500 log records; they omit configured paths, job names, and run/job
 identifiers, and redact Windows paths from summaries and log messages. Export
 is user-initiated to a location selected in the Save dialog; CodeMirror does
