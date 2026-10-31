@@ -17,11 +17,11 @@ function SampleList({ title, paths }: { title: string; paths: string[] }) {
 
 export default function PreviewPanel({ preview, onClose }: Props) {
   return (
-    <section className="preview-panel" aria-label="Read-only sync preview" aria-live="polite">
+    <section className="preview-panel" aria-labelledby="preview-title" aria-live="polite">
       <div className="preview-heading">
         <div>
           <span className="eyebrow">READ-ONLY ANALYSIS</span>
-          <h3>Preview results</h3>
+          <h2 id="preview-title">Preview results · no mirror was run</h2>
         </div>
         <button type="button" onClick={onClose}>Close</button>
       </div>
@@ -31,19 +31,23 @@ export default function PreviewPanel({ preview, onClose }: Props) {
       </p>
       <div className="preview-stats">
         <div><strong>{preview.sourceFileCount}</strong><span>included source files</span></div>
+        <div><strong>{preview.destinationFileCount}</strong><span>destination files checked</span></div>
         <div><strong>{preview.wouldCopy}</strong><span>new files</span></div>
         <div><strong>{preview.wouldUpdate}</strong><span>changed files</span></div>
-        <div className={preview.deletionGuardTriggered ? 'danger-stat' : ''}>
+        <div className={preview.wouldDelete > 0 ? 'danger-stat' : ''}>
           <strong>{preview.wouldDelete}</strong>
           <span>possible destination deletions ({preview.deletionPercentage.toFixed(1)}%)</span>
         </div>
       </div>
       {preview.deletionGuardTriggered && (
-        <p className="error" role="alert">
-          Warning: this preview shows a large number of destination-only files. A manual /MIR run can delete them.
+        <p className="warning-note">
+          This preview crosses the informational deletion-warning threshold. It does not block or
+          change a mirror: a manual /MIR run can delete destination-only files.
         </p>
       )}
-      {preview.warnings.map((warning) => <p className="warning-note" key={warning}>{warning}</p>)}
+      {preview.warnings.map((warning) => (
+        <p className="warning-note" key={warning}>{warning}</p>
+      ))}
       <div className="preview-samples">
         <SampleList title="New files" paths={preview.sampleCopies} />
         <SampleList title="Changed files" paths={preview.sampleUpdates} />

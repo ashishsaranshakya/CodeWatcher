@@ -14,6 +14,7 @@ export interface PathValidationResult {
 
 export interface RuntimeInfo {
   restrictToSandbox: boolean;
+  isPackaged: boolean;
 }
 
 export interface CodeMirrorApi {

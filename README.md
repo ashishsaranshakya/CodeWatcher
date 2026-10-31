@@ -1,8 +1,7 @@
 # CodeMirror
 
 CodeMirror is a Windows desktop application for managing filtered local folder
-mirrors. Google Drive for desktop, when used, is responsible for uploading the
-destination; a successful local mirror does not confirm cloud upload completion.
+mirrors.
 
 ## Development
 
@@ -56,26 +55,36 @@ Disabling the last automatic job removes the owned scheduled task. Automatic
 and manual mirrors both use `/MIR`; enabling automation does not add a
 deletion prompt or deletion-threshold block.
 
-## Run history and diagnostics
+## Activity and diagnostics
 
-The app shows recent local mirror runs, including their trigger, result,
-duration, and summary. History is retained to the newest 1,000 runs. Structured
-application logs are stored under the active profile's `logs` folder (for
+The Activity page shows the 100 most recent local mirror runs, with search,
+job, result, and sort filters. Each run has a detail view with its summary,
+trigger, timestamps, duration, exit code, and output-truncation status where
+available. The job page also links to its recent runs. History is retained to
+the newest 1,000 runs. Full Robocopy output is not retained in Activity.
+Application logs are stored under the active profile's `logs` folder (for
 example, `%APPDATA%\CodeMirror\dev\logs`) and rotate at 2 MB per file with
 three backups. Diagnostic exports include up to 100 recent
 runs and 500 log records; they omit configured paths, job names, and run/job
 identifiers, and redact Windows paths from summaries and log messages. Export
 is user-initiated to a location selected in the Save dialog; CodeMirror does
-not upload diagnostics. These records describe local mirroring only and do
-not indicate Google Drive upload completion.
+not upload diagnostics. These records describe local mirroring activity.
+
+Settings shows the app version and whether the current profile is the installed
+user profile or the separate development profile. Job configuration and run
+history remain local to the active profile. Uninstalling the packaged app
+removes its installed profile and owned scheduled task; it does not remove the
+separate development profile. Diagnostics export remains available from
+Activity, is initiated only by the user, and should be reviewed before sharing.
 
 ## Test process safety
 
-Tests must remain foregrounded and clean up temporary databases and any child
-processes they start before reporting completion. Worker lifecycle tests are
-bounded and await worker shutdown. The normal test suite never creates a
-scheduled task. To opt in to the Windows Scheduler integration test, which
-creates a unique disposable task and verifies it is removed in `finally`, run:
+Tests run serially and remain foregrounded to avoid Windows Robocopy file-lock
+races. They clean up temporary databases and await any child processes before
+reporting completion. Worker lifecycle tests are bounded and await worker
+shutdown. The normal test suite never creates a scheduled task. To opt in to
+the Windows Scheduler integration test, which creates a unique disposable
+task and verifies it is removed in `finally`, run:
 
 ```powershell
 $env:RUN_CODEMIRROR_SCHEDULER_INTEGRATION = '1'

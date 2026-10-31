@@ -215,7 +215,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('app:get-runtime-info', (event) => {
     assertMainFrame(event);
-    return { restrictToSandbox };
+    return { restrictToSandbox, isPackaged: app.isPackaged };
   });
 
   ipcMain.handle('paths:validate', (event, source: unknown, destination: unknown) => {
