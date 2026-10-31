@@ -33,7 +33,12 @@ and source/destination overlap.
 
 The current UI supports manual, foreground Robocopy mirrors (`/MIR`) and a
 separate read-only preview. A mirror can overwrite matching destination files
-and delete destination-only files. The **Mirror now** action runs immediately
+and delete destination-only files. After a non-failed, non-cancelled run,
+matching destination items covered by the current built-in and job exclusions
+are also removed. This cleanup is applied to manual and automatic runs. The
+read-only preview does not include that exclusion cleanup in its deletion
+counts.
+The **Mirror now** action runs immediately
 without showing the preview or asking for confirmation. The preview reports
 potential deletions and warns when they exceed 100 files or 10% of the
 destination, but this threshold is informational only and never blocks a
