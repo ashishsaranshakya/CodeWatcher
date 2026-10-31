@@ -287,6 +287,8 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; }
   .job-list-run { justify-items: start; min-width: 0; text-align: left; }
   .job-list-run > span:not(.run-outcome) { max-width: 100%; }
   .job-list-actions .text-button { margin-left: 0; }
+  .remove-confirmation { grid-template-columns: 28px minmax(0, 1fr); }
+  .remove-confirmation-actions { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; }
   .welcome-panel, .settings-card { padding: var(--space-5); }
   .preview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .overview-metrics { grid-template-columns: 1fr; }
@@ -388,9 +390,51 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; }
 }
 .job-list-actions .text-button { margin-left: auto; }
 .job-list-safety-note { margin: 0; color: var(--color-muted); font-size: var(--font-size-xs); line-height: 1.5; }
-.remove-confirmation { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-danger-border); border-radius: var(--radius-md); background: var(--color-danger-surface); }
-.remove-confirmation p { flex: 1 1 100%; margin: 0; color: var(--color-danger-text); font-size: var(--font-size-sm); }
-.remove-confirmation > button:not(.text-button) { min-height: 32px; padding: 4px 10px; border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); }
+.remove-confirmation {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-surface);
+}
+.remove-confirmation-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--color-danger-text);
+  background: #f9dddd;
+  font-size: 15px;
+  font-weight: 700;
+}
+.remove-confirmation-copy { display: grid; gap: 3px; min-width: 0; }
+.remove-confirmation-copy strong { color: var(--color-danger-text); font-size: var(--font-size-sm); }
+.remove-confirmation-copy span { color: var(--color-muted); font-size: var(--font-size-xs); line-height: 1.4; }
+.remove-confirmation-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+.remove-confirmation-actions button {
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  background: var(--color-surface);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.remove-confirmation-actions .remove-confirmation-confirm {
+  border-color: var(--color-danger);
+  color: #fff;
+  background: var(--color-danger);
+}
+.remove-confirmation-actions .remove-confirmation-confirm:hover:not(:disabled) { background: #851f1f; }
+.remove-confirmation-actions .remove-confirmation-confirm:disabled { opacity: 0.6; }
 .diagnostics-panel {
   margin-bottom: var(--space-5);
   padding: 18px;

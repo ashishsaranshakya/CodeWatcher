@@ -675,16 +675,22 @@ export default function App() {
                       </div>
                       {confirmingRemovalId === selectedJob.id ? (
                         <div className="remove-confirmation" role="group" aria-label={`Remove ${selectedJob.name}`}>
-                          <p>Remove this job? Its source and destination folders will not be deleted.</p>
-                          <button type="button" onClick={() => setConfirmingRemovalId(null)}>Keep job</button>
-                          <button
-                            type="button"
-                            className="text-button destructive"
-                            disabled={activeCopies[selectedJob.id]}
-                            onClick={() => void removeJob(selectedJob)}
-                          >
-                            Remove job
-                          </button>
+                          <span className="remove-confirmation-icon" aria-hidden="true">!</span>
+                          <div className="remove-confirmation-copy">
+                            <strong>Remove “{selectedJob.name}”?</strong>
+                            <span>Its folders and files will stay untouched.</span>
+                          </div>
+                          <div className="remove-confirmation-actions">
+                            <button type="button" onClick={() => setConfirmingRemovalId(null)}>Keep job</button>
+                            <button
+                              type="button"
+                              className="remove-confirmation-confirm"
+                              disabled={activeCopies[selectedJob.id]}
+                              onClick={() => void removeJob(selectedJob)}
+                            >
+                              Remove job
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         <button
@@ -916,16 +922,22 @@ export default function App() {
                           )}
                           {confirmingRemovalId === job.id ? (
                             <div className="remove-confirmation" role="group" aria-label={`Remove ${job.name}`}>
-                              <p>Remove this job? Its source and destination folders will not be deleted.</p>
-                              <button type="button" onClick={() => setConfirmingRemovalId(null)}>Keep job</button>
-                              <button
-                                type="button"
-                                className="text-button destructive"
-                                disabled={activeCopies[job.id]}
-                                onClick={() => void removeJob(job)}
-                              >
-                                Remove job
-                              </button>
+                              <span className="remove-confirmation-icon" aria-hidden="true">!</span>
+                              <div className="remove-confirmation-copy">
+                                <strong>Remove “{job.name}”?</strong>
+                                <span>Its folders and files will stay untouched.</span>
+                              </div>
+                              <div className="remove-confirmation-actions">
+                                <button type="button" onClick={() => setConfirmingRemovalId(null)}>Keep job</button>
+                                <button
+                                  type="button"
+                                  className="remove-confirmation-confirm"
+                                  disabled={activeCopies[job.id]}
+                                  onClick={() => void removeJob(job)}
+                                >
+                                  Remove job
+                                </button>
+                              </div>
                             </div>
                           ) : (
                             <button
