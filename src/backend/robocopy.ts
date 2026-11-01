@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readdir, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type {
   ExclusionRule,
@@ -40,6 +40,63 @@ interface CapturedOutput {
 interface ExclusionPaths {
   directories: string[];
   exactFileNames: string[];
+}
+
+async function removeExcludedDestinationItems(
+  destination: string,
+  rules: readonly ExclusionRule[],
+  shouldCancel: () => boolean,
+): Promise<number> {
+  const pending = [{ directory: destination, relativeDirectory: '', insideExcludedDirectory: false }];
+  const excludedDirectories: string[] = [];
+  let removedCount = 0;
+
+  for (let index = 0; index < pending.length; index += 1) {
+    if (shouldCancel()) throw new Error('Excluded-item cleanup was cancelled.');
+    const { directory, relativeDirectory, insideExcludedDirectory } = pending[index];
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (shouldCancel()) throw new Error('Excluded-item cleanup was cancelled.');
+      const fullPath = path.join(directory, entry.name);
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+      const metadata = await lstat(fullPath);
+
+      if (metadata.isSymbolicLink()) {
+        if (
+          insideExcludedDirectory ||
+          isExcluded(relativePath, false, rules) ||
+          isExcluded(relativePath, true, rules)
+        ) {
+          await unlink(fullPath);
+          removedCount += 1;
+        }
+        continue;
+      }
+
+      if (metadata.isDirectory()) {
+        const excluded = insideExcludedDirectory || isExcluded(relativePath, true, rules);
+        if (excluded) excludedDirectories.push(fullPath);
+        pending.push({
+          directory: fullPath,
+          relativeDirectory: relativePath,
+          insideExcludedDirectory: excluded,
+        });
+      } else if (
+        metadata.isFile() &&
+        (insideExcludedDirectory || isExcluded(relativePath, false, rules))
+      ) {
+        await unlink(fullPath);
+        removedCount += 1;
+      }
+    }
+  }
+
+  for (const directory of excludedDirectories.reverse()) {
+    if (shouldCancel()) throw new Error('Excluded-item cleanup was cancelled.');
+    await rmdir(directory);
+    removedCount += 1;
+  }
+
+  return removedCount;
 }
 
 export function classifyRobocopyExitCode(exitCode: number): SyncOutcome {
@@ -316,6 +373,27 @@ export class RobocopyService {
               : 'Robocopy mirror completed successfully.';
       if (outcome === 'timed_out') {
         summary = 'Robocopy exceeded its time limit and was stopped; destination files may have been partially changed.';
+      }
+      if (outcome === 'success' || outcome === 'warning') {
+        let removedExcludedItems: number;
+        try {
+          removedExcludedItems = await removeExcludedDestinationItems(
+            safePaths.destinationPath,
+            job.exclusions,
+            () => this.stopping || this.cancelledJobs.has(jobId),
+          );
+        } catch (cleanupError: unknown) {
+          const reason =
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : 'an unknown filesystem error occurred';
+          throw new Error(
+            `Robocopy finished, but excluded destination items could not be fully removed: ${reason}. The destination may be partially changed.`,
+          );
+        }
+        if (removedExcludedItems > 0) {
+          summary += ` Removed ${removedExcludedItems} excluded destination item${removedExcludedItems === 1 ? '' : 's'}.`;
+        }
       }
     } catch (error) {
       if (this.cancelledJobs.has(jobId)) {

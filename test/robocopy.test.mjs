@@ -152,6 +152,64 @@ describe('Robocopy mirror behavior', () => {
     }
   });
 
+  it('removes destination items newly matched by current exclusions on manual and worker runs', {
+    skip: process.platform !== 'win32',
+  }, async () => {
+    const root = mkdtempSync(join(SANDBOX_ROOT, '.codemirror-exclusion-cleanup-test-'));
+    const migrations = join(process.cwd(), 'migrations');
+    let repository;
+    try {
+      const source = join(root, 'source');
+      const destination = join(root, 'destination');
+      mkdirSync(source);
+      mkdirSync(destination);
+      mkdirSync(join(source, 'manual-folder'));
+      mkdirSync(join(source, 'automatic-folder'));
+      writeFileSync(join(source, 'manual.omit'), 'copied before exclusion');
+      writeFileSync(join(source, 'manual-folder', 'keep.txt'), 'copied before exclusion');
+      writeFileSync(join(source, 'automatic-folder', 'keep.txt'), 'copied before exclusion');
+      repository = new JobRepository(join(root, 'state.sqlite'), migrations);
+      const jobs = new JobService(repository);
+      const job = await jobs.create({
+        name: 'exclusion-cleanup',
+        sourcePath: source,
+        destinationPath: destination,
+      });
+      const { RobocopyService } = await import('../src/backend/robocopy.ts');
+      const service = new RobocopyService(repository, 15000);
+
+      const initialRun = await service.runNow(job.id);
+      assert.notEqual(initialRun.outcome, 'failure');
+      assert.equal(existsSync(join(destination, 'manual.omit')), true);
+      assert.equal(existsSync(join(destination, 'manual-folder', 'keep.txt')), true);
+      assert.equal(existsSync(join(destination, 'automatic-folder', 'keep.txt')), true);
+
+      jobs.updateExclusions(job.id, [
+        { type: 'file_pattern', pattern: '*.omit', enabled: true, origin: 'job' },
+        { type: 'directory_name', pattern: 'manual-folder', enabled: true, origin: 'job' },
+      ]);
+      const manualRun = await service.runNow(job.id, 'manual');
+      assert.notEqual(manualRun.outcome, 'failure');
+      assert.equal(existsSync(join(destination, 'manual.omit')), false);
+      assert.equal(existsSync(join(destination, 'manual-folder')), false);
+      assert.equal(existsSync(join(source, 'manual.omit')), true);
+      assert.match(manualRun.summary, /Removed .* excluded destination item/);
+
+      jobs.updateExclusions(job.id, [
+        { type: 'file_pattern', pattern: '*.omit', enabled: true, origin: 'job' },
+        { type: 'directory_name', pattern: 'manual-folder', enabled: true, origin: 'job' },
+        { type: 'directory_name', pattern: 'automatic-folder', enabled: true, origin: 'job' },
+      ]);
+      const automaticRun = await service.runNow(job.id, 'watcher');
+      assert.notEqual(automaticRun.outcome, 'failure');
+      assert.equal(existsSync(join(destination, 'automatic-folder')), false);
+      assert.equal(existsSync(join(source, 'automatic-folder', 'keep.txt')), true);
+    } finally {
+      repository?.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('runs /MIR despite the informational preview deletion threshold', {
     skip: process.platform !== 'win32',
   }, async () => {

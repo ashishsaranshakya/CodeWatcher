@@ -173,9 +173,9 @@ export default function ExclusionsEditor({ job, onSaved }: Props) {
       <div className="exclusion-intro">
         <h3>Exclusions</h3>
         <p>
-          Matching files and folders are left out of this mirror. Exclusions only remove files from
-          the set being mirrored; they cannot restore files that were already deleted or overwritten,
-          or override another exclusion. Review the /MIR warning before running a mirror.
+          Matching files and folders are omitted from the source copy, and matching items already in
+          the destination are removed after a run completes without failure or cancellation.
+          Exclusions do not override one another.
         </p>
       </div>
 
